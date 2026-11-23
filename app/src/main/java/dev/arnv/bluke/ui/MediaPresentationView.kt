@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
 import android.content.SharedPreferences
+import android.content.res.Configuration
 import android.hardware.SensorManager
 import android.os.SystemClock
 import android.os.VibrationEffect
@@ -60,12 +61,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.coerceIn
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.edit
@@ -249,7 +252,34 @@ internal fun MediaPresentationView(
         .background(RemoteCanvasColor)
         .testTag("media_presentation_view_root")
 
-    if (resolvedPosture == MultimediaPosture.LANDSCAPE) {
+    val isPortraitWindow = LocalConfiguration.current.orientation == Configuration.ORIENTATION_PORTRAIT
+
+    if (resolvedPosture == MultimediaPosture.LANDSCAPE && isPortraitWindow) {
+        Column(modifier = rootModifier) {
+            MultimediaTopBar(
+                btManager = btManager,
+                onClose = onClose,
+                launchMode = launchMode,
+                onModeChange = onModeChange,
+                sharedPrefs = sharedPrefs,
+                isConnected = isConnected,
+                sensitivity = sensitivity,
+                onSensitivityChange = cycleSensitivity,
+                scrollSensitivity = scrollSensitivity,
+                onScrollSensitivityChange = cycleScrollSensitivity,
+                isVibrationEnabled = isVibrationEnabled,
+                onToggleVibration = toggleVibration,
+                stacked = true,
+            )
+            MultimediaPortraitCanvas(
+                btManager = btManager,
+                sensitivity = sensitivity,
+                scrollSensitivity = scrollSensitivity,
+                triggerVibration = ::triggerVibration,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+    } else if (resolvedPosture == MultimediaPosture.LANDSCAPE) {
         Column(modifier = rootModifier) {
             MultimediaTopBar(
                 btManager = btManager,
@@ -295,6 +325,55 @@ internal fun MediaPresentationView(
                 scrollSensitivity = scrollSensitivity,
                 triggerVibration = ::triggerVibration,
                 modifier = Modifier.weight(1f).fillMaxHeight(),
+            )
+        }
+    }
+}
+
+/**
+ * True-portrait layout: the button deck (media keys + arrow pad) on top, sized to fit the
+ * screen width, and the touchpad with mouse buttons and slide navigation filling the rest.
+ * Nothing is rotated, so arrows and touchpad movement match the phone's orientation.
+ */
+@Composable
+private fun MultimediaPortraitCanvas(
+    btManager: BluetoothKeyboardManager,
+    sensitivity: Float,
+    scrollSensitivity: Float,
+    triggerVibration: (Long) -> Unit,
+    modifier: Modifier,
+) {
+    BoxWithConstraints(
+        modifier = modifier.padding(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 24.dp),
+    ) {
+        val horizontalGap = 7.dp
+        val verticalGap = 8.dp
+        // The deck is two 3-button-wide groups: 6 buttons, 2 gaps inside each group,
+        // and a 3-gap spacer between the groups.
+        val buttonSize = ((maxWidth - horizontalGap * 7) / 6).coerceIn(36.dp, 64.dp)
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            MultimediaButtonDeck(
+                btManager = btManager,
+                posture = MultimediaPosture.LANDSCAPE,
+                buttonWidth = buttonSize,
+                buttonHeight = buttonSize,
+                horizontalGap = horizontalGap,
+                verticalGap = verticalGap,
+                triggerVibration = triggerVibration,
+                modifier = Modifier,
+            )
+            MultimediaPointerDeck(
+                btManager = btManager,
+                posture = MultimediaPosture.LANDSCAPE,
+                sensitivity = sensitivity,
+                scrollSensitivity = scrollSensitivity,
+                triggerVibration = triggerVibration,
+                compact = false,
+                modifier = Modifier.fillMaxWidth().weight(1f),
             )
         }
     }
@@ -859,6 +938,7 @@ private fun MultimediaTopBar(
     onScrollSensitivityChange: () -> Unit,
     isVibrationEnabled: Boolean,
     onToggleVibration: () -> Unit,
+    stacked: Boolean = false,
 ) {
     val context = LocalContext.current
     val connectedDevice by btManager.connectedDevice.collectAsState()
@@ -867,15 +947,7 @@ private fun MultimediaTopBar(
     } catch (_: SecurityException) {
         if (isConnected) "Host" else "No Host"
     }
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(42.dp)
-            .background(Color.Black.copy(alpha = 0.45f))
-            .padding(horizontal = 8.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
+    val hostGroup: @Composable () -> Unit = {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -914,7 +986,8 @@ private fun MultimediaTopBar(
                 Text("[offline]", color = Color.White.copy(alpha = 0.45f), fontSize = 9.sp)
             }
         }
-
+    }
+    val settingsGroup: @Composable () -> Unit = {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -944,6 +1017,30 @@ private fun MultimediaTopBar(
                     )
                 }
             }
+        }
+    }
+
+    val barModifier = Modifier
+        .fillMaxWidth()
+        .background(Color.Black.copy(alpha = 0.45f))
+        .padding(horizontal = 8.dp, vertical = 4.dp)
+    if (stacked) {
+        // Narrow (portrait) screens: put host info and settings on separate rows.
+        Column(
+            modifier = barModifier,
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            hostGroup()
+            settingsGroup()
+        }
+    } else {
+        Row(
+            modifier = barModifier.height(42.dp - 8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            hostGroup()
+            settingsGroup()
         }
     }
 }
