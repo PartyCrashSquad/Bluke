@@ -428,12 +428,19 @@ fun HomeScreen(
     }
 
     // Toggle orientation and full-screen layout helper automatically
-    LaunchedEffect(isKeyboardActive) {
+    LaunchedEffect(isKeyboardActive, launchMode) {
         val activity = context as? Activity ?: return@LaunchedEffect
         val window = activity.window ?: return@LaunchedEffect
         if (isKeyboardActive) {
             try {
-                activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+                // Multimedia mode runs in true portrait so every control (arrows, touchpad,
+                // buttons) stays aligned with how the phone is held. Other modes stay landscape.
+                @Suppress("SourceLockedOrientationActivity")
+                activity.requestedOrientation = if (launchMode == InputMode.MEDIA_PRESENTATION.id) {
+                    ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                } else {
+                    ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+                }
             } catch (e: Exception) {
                 Log.e("HomeScreen", "Error setting orientation to landscape: ${e.message}")
             }
@@ -667,6 +674,9 @@ fun HomeScreen(
                                     },
                                     sharedPrefs = sharedPrefs,
                                     isConnected = isConnected,
+                                    // The screen itself is portrait now, so skip the
+                                    // sensor-driven "held upright" rotation trick.
+                                    postureOverride = MultimediaPosture.LANDSCAPE,
                                 )
                             }
                         }
